@@ -241,6 +241,14 @@ static void azihsm_ossl_teardown(AZIHSM_OSSL_PROV_CTX *provctx)
     CRYPTO_THREAD_lock_free(provctx->unwrapping_key.lock);
 
     azihsm_close_device_and_session(provctx->device, provctx->session);
+
+    /* Release the default provider reference we acquired in OSSL_provider_init
+     * to keep the NULL library context's default provider active. */
+    if (provctx->default_provider != NULL)
+    {
+        OSSL_PROVIDER_unload(provctx->default_provider);
+    }
+
     OPENSSL_free(provctx);
 }
 
@@ -674,7 +682,7 @@ static OSSL_STATUS parse_provider_config(
  * openssl.cnf only activates azihsm \u2014 the bare EVP calls would be
  * dispatched to the azihsm provider, creating infinite recursion.
  */
-static OSSL_STATUS ensure_default_provider(void)
+static OSSL_PROVIDER *ensure_default_provider(void)
 {
     OSSL_PROVIDER *dflt = OSSL_PROVIDER_load(NULL, "default");
     if (dflt == NULL)
@@ -686,12 +694,8 @@ static OSSL_STATUS ensure_default_provider(void)
             "alongside the azihsm provider to prevent infinite "
             "recursion in internal crypto operations"
         );
-        return OSSL_FAILURE;
     }
-    /* Release our reference; the provider stays loaded in the default
-     * library context because OpenSSL ref-counts it. */
-    OSSL_PROVIDER_unload(dflt);
-    return OSSL_SUCCESS;
+    return dflt;
 }
 
 OSSL_STATUS OSSL_provider_init(
@@ -722,7 +726,8 @@ OSSL_STATUS OSSL_provider_init(
         return OSSL_FAILURE;
     }
 
-    if (ensure_default_provider() != OSSL_SUCCESS)
+    ctx->default_provider = ensure_default_provider();
+    if (ctx->default_provider == NULL)
     {
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
@@ -733,6 +738,7 @@ OSSL_STATUS OSSL_provider_init(
     if (ctx->unwrapping_key.lock == NULL)
     {
         ERR_raise(ERR_LIB_PROV, ERR_R_MALLOC_FAILURE);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -752,6 +758,7 @@ OSSL_STATUS OSSL_provider_init(
     if (parse_provider_config(&ctx->config, handle, get_params_fn) != OSSL_SUCCESS)
     {
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -772,6 +779,7 @@ OSSL_STATUS OSSL_provider_init(
             AZIHSM_API_REVISION_MAX_MINOR
         );
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
@@ -784,6 +792,7 @@ OSSL_STATUS OSSL_provider_init(
         ERR_raise(ERR_LIB_PROV, ERR_R_INIT_FAIL);
 
         CRYPTO_THREAD_lock_free(ctx->unwrapping_key.lock);
+        OSSL_PROVIDER_unload(ctx->default_provider);
         OSSL_LIB_CTX_free(ctx->libctx);
         OPENSSL_free(ctx);
         return OSSL_FAILURE;
