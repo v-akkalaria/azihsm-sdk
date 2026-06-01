@@ -683,6 +683,28 @@ impl HsmPartitionManager for StdHsmPal {
         Ok(self.enabled_part(u8::from(io.pid()))?.credential_set)
     }
 
+    fn part_verify_credential(&self, io: &impl HsmIo, id: &[u8], pin: &[u8]) -> HsmResult<()> {
+        if id.len() != 16 || pin.len() != 16 {
+            return Err(HsmError::InvalidArg);
+        }
+        let part = self.enabled_part(u8::from(io.pid()))?;
+        if !part.credential_set {
+            return Err(HsmError::InvalidAppCredentials);
+        }
+        // Constant-time compare both fields fully regardless of any
+        // mismatch in either, so we don't leak which one was wrong via
+        // timing.
+        let mut diff = 0u8;
+        for i in 0..16 {
+            diff |= part.credential_id[i] ^ id[i];
+            diff |= part.credential_pin[i] ^ pin[i];
+        }
+        if diff != 0 {
+            return Err(HsmError::InvalidAppCredentials);
+        }
+        Ok(())
+    }
+
     fn part_is_provisioned(&self, io: &impl HsmIo) -> HsmResult<bool> {
         Ok(self.enabled_part(u8::from(io.pid()))?.mk_key_id.is_some())
     }
@@ -959,6 +981,12 @@ impl StdHsmPal {
             let entry = &mut table.entries[idx];
             entry.id_key_id = Some(id_kid);
             entry.id_pub_key = id_pub;
+            // Defensive: a `GetCertificate` request that slipped in
+            // between `part_disable` and here would have rebuilt the
+            // leaf-cert cache over the zeroed `id_pub_key`.  Invalidate
+            // again so the next request rebuilds against the fresh key.
+            entry.leaf_cert[..entry.leaf_cert_len].fill(0);
+            entry.leaf_cert_len = 0;
         }
 
         // Generate establish-credential encryption ECC-384 key pair.
