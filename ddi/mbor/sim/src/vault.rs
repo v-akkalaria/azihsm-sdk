@@ -57,6 +57,16 @@ pub(crate) const APP_ID_FOR_INTERNAL_KEYS: Uuid = DEFAULT_VAULT_ID;
 
 pub(crate) const MAX_SESSIONS: usize = 8;
 
+/// Whether `create_physical_session` enforces the `MAX_SESSIONS` cap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SessionLimitPolicy {
+    /// Enforce the cap. Used for fresh `OpenSession`.
+    Enforce,
+    /// Bypass the cap. Only valid for reopening an existing renegotiation-pending
+    /// session, where the total session count does not increase.
+    BypassForReopen,
+}
+
 struct KeyNumber(u16);
 
 impl KeyNumber {
@@ -869,7 +879,7 @@ impl VaultInner {
     /// # Arguments
     /// * `api_rev` - API revision
     /// * `mk_session` - Masking key for the session
-    /// * `session_count_check` - Whether to check/enforce the session count limit
+    /// * `limit_policy` - Whether to enforce or bypass the `MAX_SESSIONS` cap.
     ///
     /// # Returns
     /// * `Ok(physical_session_key_num)` if successful
@@ -880,9 +890,11 @@ impl VaultInner {
         &mut self,
         api_rev: ApiRev,
         mk_session: &[u8],
-        session_count_check: bool,
+        limit_policy: SessionLimitPolicy,
     ) -> Result<u16, ManticoreError> {
-        if session_count_check && self.get_session_count() >= MAX_SESSIONS {
+        if matches!(limit_policy, SessionLimitPolicy::Enforce)
+            && self.get_session_count() >= MAX_SESSIONS
+        {
             Err(ManticoreError::VaultSessionLimitReached)?;
         }
 
@@ -1030,7 +1042,11 @@ impl VaultInner {
                 ManticoreError::InternalError
             })?;
 
-        let sess_key_num = self.create_physical_session(api_rev, &decoded_session_mk, true)?;
+        let sess_key_num = self.create_physical_session(
+            api_rev,
+            &decoded_session_mk,
+            SessionLimitPolicy::Enforce,
+        )?;
         let virtual_session_id = self.session_table.create_session(sess_key_num)?;
 
         Ok(SessionResult {
@@ -1115,9 +1131,13 @@ impl VaultInner {
                 ManticoreError::InternalError
             })?;
 
-        // Get session_seed from verify_encrypted_session_credentials
-        let physical_session_key_num =
-            self.create_physical_session(api_rev, &decoded_session_mk, false)?;
+        // Reuses an existing virtual session slot guarded by needs_renegotiation
+        // above, so the total session count does not grow - bypass the cap.
+        let physical_session_key_num = self.create_physical_session(
+            api_rev,
+            &decoded_session_mk,
+            SessionLimitPolicy::BypassForReopen,
+        )?;
 
         // Now recreate the session
         self.session_table

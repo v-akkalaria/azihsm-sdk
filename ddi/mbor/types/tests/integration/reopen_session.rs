@@ -1625,7 +1625,7 @@ fn test_reopen_session_with_invalid_session_id() {
             }
 
             {
-                // Session id exists but doesn't needs to be reopened
+                // Session id exists but doesn't need to be reopened
                 let new_dev = ddi.open_dev(path).unwrap();
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
@@ -1659,13 +1659,17 @@ fn test_reopen_session_with_invalid_session_id() {
 
                 let resp = helper_reopen_session(
                     &new_dev,
-                    resp.hdr.sess_id.unwrap(), // valid session id but doesnt need to be reopened
+                    resp.hdr.sess_id.unwrap(), // valid session id but doesn't need to be reopened
                     Some(DdiApiRev { major: 1, minor: 0 }),
                     encrypted_credential,
                     pub_key,
                     resp.data.bmk_session,
                 );
-                assert!(resp.is_err(), "ReopenSession should fail: {:?}", resp);
+                assert!(
+                    resp.is_err(),
+                    "ReopenSession on a session that doesn't need reopening should fail, got: {:?}",
+                    resp
+                );
             }
         },
     );
