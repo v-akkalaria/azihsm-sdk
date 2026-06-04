@@ -1616,11 +1616,13 @@ fn test_reopen_session_with_invalid_session_id() {
                     setup_res.session_bmk,
                 );
 
-                let err = resp.unwrap_err();
                 assert!(
-                    matches!(err, DdiError::DdiStatus(DdiStatus::FileHandleSessionIdDoesNotMatch)),
+                    matches!(
+                        &resp,
+                        Err(DdiError::DdiStatus(DdiStatus::FileHandleSessionIdDoesNotMatch))
+                    ),
                     "ReopenSession with invalid session id should fail with FileHandleSessionIdDoesNotMatch, got: {:?}",
-                    err
+                    resp
                 );
             }
 
@@ -1666,8 +1668,11 @@ fn test_reopen_session_with_invalid_session_id() {
                     resp.data.bmk_session,
                 );
                 assert!(
-                    resp.is_err(),
-                    "ReopenSession on a session that doesn't need reopening should fail, got: {:?}",
+                    matches!(
+                        &resp,
+                        Err(DdiError::DdiStatus(DdiStatus::MaskedKeyDecodeFailed))
+                    ),
+                    "ReopenSession on a session that doesn't need reopening should fail with MaskedKeyDecodeFailed, got: {:?}",
                     resp
                 );
             }

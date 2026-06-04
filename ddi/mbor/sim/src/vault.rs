@@ -1081,7 +1081,7 @@ impl VaultInner {
     ) -> Result<SessionResult, ManticoreError> {
         // Check renegotiation requirement first
         if !self.session_table.needs_renegotiation(reopen_sess_id) {
-            return Err(ManticoreError::InvalidArgument);
+            return Err(ManticoreError::MaskedKeyDecodeFailed);
         }
 
         // Verify credentials and get session seed
