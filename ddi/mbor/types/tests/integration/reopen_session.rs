@@ -1599,7 +1599,7 @@ fn test_reopen_session_with_invalid_session_id() {
             );
 
             {
-                // Session id doesnt exist
+                // Session id doesn't exist
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     dev,
                     TEST_CRED_ID,
@@ -1616,11 +1616,16 @@ fn test_reopen_session_with_invalid_session_id() {
                     setup_res.session_bmk,
                 );
 
-                assert!(resp.is_err(), "resp {:?}", resp);
+                let err = resp.unwrap_err();
+                assert!(
+                    matches!(err, DdiError::DdiStatus(DdiStatus::FileHandleSessionIdDoesNotMatch)),
+                    "ReopenSession with invalid session id should fail with FileHandleSessionIdDoesNotMatch, got: {:?}",
+                    err
+                );
             }
 
             {
-                // Session id exists but doesnt need to be re-open
+                // Session id exists but doesn't needs to be reopened
                 let new_dev = ddi.open_dev(path).unwrap();
 
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
