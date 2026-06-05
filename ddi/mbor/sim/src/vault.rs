@@ -1131,8 +1131,10 @@ impl VaultInner {
                 ManticoreError::InternalError
             })?;
 
-        // Reuses an existing virtual session slot guarded by needs_renegotiation
-        // above, so the total session count does not grow - bypass the cap.
+        // get_session_count() counts physical session keys. The needs_renegotiation
+        // guard above ensures the previous physical key for this virtual session was
+        // already removed, so this allocation is net-zero with respect to that count.
+        // The virtual slot is reused via recreate_session below.
         let physical_session_key_num = self.create_physical_session(
             api_rev,
             &decoded_session_mk,
