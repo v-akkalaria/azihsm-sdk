@@ -1047,7 +1047,15 @@ impl VaultInner {
             &decoded_session_mk,
             SessionLimitPolicy::Enforce,
         )?;
-        let virtual_session_id = self.session_table.create_session(sess_key_num)?;
+
+        // Roll back the physical session key if creating the virtual session entry fails
+        let virtual_session_id = match self.session_table.create_session(sess_key_num) {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = self.remove_key(sess_key_num);
+                return Err(e);
+            }
+        };
 
         Ok(SessionResult {
             session_id: virtual_session_id,

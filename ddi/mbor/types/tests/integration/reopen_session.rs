@@ -1437,24 +1437,21 @@ fn test_reopen_session_after_lm_with_max() {
                 MborByteArray::from_slice(&[]).expect("Failed to create empty Mbor array"),
             );
 
-            // Step 4: Open new sessions on new file handles. Slot 0 is held by S1
-            // (reneg-pending). Slots 1..7 are free -> MAX_SESSIONS - 1 = 7 should succeed.
+            // Step 4: Try to open MAX_SESSIONS new sessions on fresh file handles.
+            // Slot 0 is held by S1 (reneg-pending). Slots 1..7 are free, so the first
+            // MAX_SESSIONS - 1 attempts MUST succeed and the final attempt MUST fail
+            // with VaultSessionLimitReached -- proving slot 0 is preserved for lazy
+            // reopen of the reneg-pending session.
             //
             // Keep the file handles alive in a Vec so the driver does not flush sessions
-            // (file-handle close would trigger FlushSession -> free the slot).
-            let expected_success = MAX_SESSIONS - 1;
-            let mut file_handles: Vec<<DdiTest as Ddi>::Dev> = Vec::new();
-
-            for i in 0..expected_success {
+            let try_open_new_session = || {
                 let new_dev = ddi.open_dev(path).unwrap();
-
                 let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
                     &new_dev,
                     TEST_CRED_ID,
                     TEST_CRED_PIN,
                     TEST_SESSION_SEED,
                 );
-
                 let resp = helper_open_session(
                     &new_dev,
                     None,
@@ -1462,66 +1459,53 @@ fn test_reopen_session_after_lm_with_max() {
                     encrypted_credential,
                     pub_key,
                 );
+                (new_dev, resp)
+            };
 
-                assert!(
-                    resp.is_ok(),
-                    "OpenSession #{} of {} should succeed (slots 1..7 are free after LM): {:?}",
-                    i + 1,
-                    expected_success,
-                    resp
-                );
+            let attempts: Vec<_> = (0..MAX_SESSIONS).map(|_| try_open_new_session()).collect();
+            let last_idx = attempts.len() - 1;
+            let mut file_handles: Vec<<DdiTest as Ddi>::Dev> = Vec::new();
 
-                let resp = resp.unwrap();
-                assert!(resp.hdr.sess_id.is_some());
-                assert_eq!(resp.hdr.op, DdiOp::OpenSession);
-                assert_eq!(resp.hdr.status, DdiStatus::Success);
+            for (i, (new_dev, resp)) in attempts.into_iter().enumerate() {
+                if i < last_idx {
+                    assert!(
+                        resp.is_ok(),
+                        "OpenSession #{} of {} should succeed (slots 1..7 are free after LM): {:?}",
+                        i + 1,
+                        last_idx,
+                        resp
+                    );
+                    let resp = resp.unwrap();
+                    assert!(resp.hdr.sess_id.is_some());
+                    assert_eq!(resp.hdr.op, DdiOp::OpenSession);
+                    assert_eq!(resp.hdr.status, DdiStatus::Success);
+                    file_handles.push(new_dev);
+                } else {
+                    assert!(
+                        resp.is_err(),
+                        "OpenSession #{} must fail -- slot 0 is reserved for reneg-pending S1 \
+                         (lazy reopen must remain possible). Got Ok: {:?}",
+                        MAX_SESSIONS,
+                        resp
+                    );
 
-                file_handles.push(new_dev);
+                    let err = resp.unwrap_err();
+                    assert!(
+                        matches!(
+                            err,
+                            DdiError::DdiStatus(DdiStatus::VaultSessionLimitReached)
+                        ),
+                        "OpenSession #{} should fail with VaultSessionLimitReached, got: {:?}",
+                        MAX_SESSIONS,
+                        err
+                    );
+                }
             }
 
-            // Step 5: The 8th OpenSession MUST fail with VaultSessionLimitReached.
-            // Slot 0 is reserved for S1 (reneg-pending) and must not be silently evicted --
-            // the host may still call ReopenSession on S1 later (lazy renegotiation).
-            let new_dev = ddi.open_dev(path).unwrap();
-
-            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
-                &new_dev,
-                TEST_CRED_ID,
-                TEST_CRED_PIN,
-                TEST_SESSION_SEED,
-            );
-
-            let resp = helper_open_session(
-                &new_dev,
-                None,
-                Some(DdiApiRev { major: 1, minor: 0 }),
-                encrypted_credential,
-                pub_key,
-            );
-
-            assert!(
-                resp.is_err(),
-                "OpenSession #{} must fail -- slot 0 is reserved for reneg-pending S1 \
-                 (lazy reopen must remain possible). Got Ok: {:?}",
-                MAX_SESSIONS,
-                resp
-            );
-
-            let err = resp.unwrap_err();
-            assert!(
-                matches!(
-                    err,
-                    DdiError::DdiStatus(DdiStatus::VaultSessionLimitReached)
-                ),
-                "OpenSession #{} should fail with VaultSessionLimitReached, got: {:?}",
-                MAX_SESSIONS,
-                err
-            );
-
-            // Step 6: Reopen S1 on the ORIGINAL file handle. This is the key assertion --
+            // Step 5: Reopen S1 on the ORIGINAL file handle. This is the key assertion --
             // it proves the firmware actually preserved slot 0 for the reneg-pending
             // session (rather than just blocking new opens). If the slot had been silently
-            // evicted by the open attempts in Step 4/5, this reopen would fail with
+            // evicted by the open attempts in Step 4, this reopen would fail with
             // SessionNotFound / SessionMismatch and prove an LM regression.
             let (reopen_enc_cred, reopen_pub_key) = encrypt_userid_pin_for_open_session(
                 dev,
@@ -1556,7 +1540,7 @@ fn test_reopen_session_after_lm_with_max() {
                 "Reopened session id must match the original S1 id"
             );
 
-            // Step 7: Close S1 cleanly to free slot 0 (cleanup hygiene). The other
+            // Step 6: Close S1 cleanly to free slot 0 (cleanup hygiene). The other
             // 7 sessions opened on new file handles are freed implicitly when their
             // file handles are dropped (FlushSession on driver close).
             let close_resp = helper_close_session(
@@ -1568,6 +1552,31 @@ fn test_reopen_session_after_lm_with_max() {
                 close_resp.is_ok(),
                 "CloseSession of S1 after reopen must succeed: {:?}",
                 close_resp
+            );
+
+            // Step 7: Drop the file handles so the driver flushes 7 opened sessions,
+            // then sanity-check the device returned to baseline by opening a fresh session
+            drop(file_handles);
+
+            let sanity_dev = ddi.open_dev(path).unwrap();
+            let (encrypted_credential, pub_key) = encrypt_userid_pin_for_open_session(
+                &sanity_dev,
+                TEST_CRED_ID,
+                TEST_CRED_PIN,
+                TEST_SESSION_SEED,
+            );
+            let sanity_resp = helper_open_session(
+                &sanity_dev,
+                None,
+                Some(DdiApiRev { major: 1, minor: 0 }),
+                encrypted_credential,
+                pub_key,
+            );
+            assert!(
+                sanity_resp.is_ok(),
+                "Post-cleanup OpenSession must succeed - device should be back to \
+                 baseline state after closing S1 and dropping the other handles: {:?}",
+                sanity_resp
             );
         },
     );
