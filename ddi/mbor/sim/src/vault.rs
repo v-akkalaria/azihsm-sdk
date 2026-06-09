@@ -1139,10 +1139,12 @@ impl VaultInner {
                 ManticoreError::InternalError
             })?;
 
-        // get_session_count() counts physical session keys. The needs_renegotiation
-        // guard above ensures the previous physical key for this virtual session was
-        // already removed, so this allocation is net-zero with respect to that count.
-        // The virtual slot is reused via recreate_session below.
+        // get_session_count() counts physical session keys (Kind::Session entries).
+        // The previous physical key for this virtual session was already removed by
+        // close_session when it transitioned to renegotiation-pending state, so this
+        // allocation is net-zero w.r.t. that count. The needs_renegotiation guard at
+        // the top of this function rejects calls where that prior removal didn't
+        // happen. The virtual slot is reused via recreate_session below
         let physical_session_key_num = self.create_physical_session(
             api_rev,
             &decoded_session_mk,
@@ -3205,6 +3207,41 @@ pub(crate) mod tests {
 
         let result = vault.close_session(session_result.session_id);
         assert_eq!(result, Err(ManticoreError::SessionNotFound));
+    }
+
+    #[test]
+    fn test_open_session_rolls_back_physical_key_when_session_table_full() {
+        let vault = Vault::new(Uuid::from_bytes([0xb2; 16]), 4).expect("Failed to create Vault");
+        helper_establish_credential(&vault, TEST_CRED_ID, TEST_CRED_PIN);
+        let api_rev = ApiRev { major: 1, minor: 0 };
+
+        // Pre-fill the virtual mask without adding physical session keys.
+        {
+            let mut inner = vault.inner.write();
+            for _ in 0..MAX_SESSIONS {
+                inner
+                    .session_table
+                    .create_session(0)
+                    .expect("seed virtual slot");
+            }
+        }
+        assert_eq!(
+            vault.inner.read().get_session_count(),
+            0,
+            "precondition: no physical session keys yet"
+        );
+
+        // open_session must fail with VaultSessionLimitReached and
+        // create_physical_session must be removed by the rollback path.
+        let result = helper_open_session(&vault, TEST_CRED_ID, TEST_CRED_PIN, api_rev);
+        assert_eq!(result.err(), Some(ManticoreError::VaultSessionLimitReached));
+
+        assert_eq!(
+            vault.inner.read().get_session_count(),
+            0,
+            "rollback must remove the physical session key that was added \
+             before session_table.create_session failed"
+        );
     }
 
     #[test]
