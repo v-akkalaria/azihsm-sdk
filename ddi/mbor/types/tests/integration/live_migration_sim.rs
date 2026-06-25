@@ -1022,10 +1022,14 @@ fn test_live_migration_concurrent_separate_sessions() {
     }
 
     // Function to handle session management operations with separate device and session
+    // Workers hand `ThreadSessionInfo` back to main on every exit path so the dev
+    // (and driver-side FlushSession on close) is dropped only after the migration
+    // thread has joined — avoids racing FlushSession against an in-flight NSSR, which leaks
+    // the firmware session slot and eventually triggers `VaultSessionLimitReached` error
     fn session_management_worker_with_own_session(
         thread_session_info: ThreadSessionInfo,
         barrier: Arc<Barrier>,
-    ) -> Result<(), String> {
+    ) -> (ThreadSessionInfo, Result<(), String>) {
         let thread_id = thread_session_info.thread_id;
         let session_id = thread_session_info.session_id;
 
@@ -1096,22 +1100,24 @@ fn test_live_migration_concurrent_separate_sessions() {
                             // Continue with the main loop after successful reopen
                         }
                         Err(e) => {
-                            return Err(e);
+                            return (thread_session_info, Err(e));
                         }
                     }
                 }
                 Err(e) => {
-                    // Any other error, fail the test
-                    return Err(format!(
+                    return (
+                        thread_session_info,
+                        Err(format!(
                         "Thread {}: Unexpected error while adding session key: {:?}",
                         thread_id, e
-                    ));
+                        )),
+                    );
                 }
             }
         }
 
         info!("Thread {}: Completed {} loops", thread_id, loop_count);
-        Ok(())
+        (thread_session_info, Ok(()))
     }
 
     // Create a single migration device for triggering migrations
@@ -1195,10 +1201,11 @@ fn test_live_migration_concurrent_separate_sessions() {
     // Wait for migration thread to complete
     let migration_result = migration_thread.join().unwrap();
 
-    // Wait for all session threads to complete
+    // Wait for all session threads to complete and drop their device handles
     let mut all_session_results = Vec::new();
     for (i, session_thread) in session_threads.into_iter().enumerate() {
-        let result = session_thread.join().unwrap();
+        let (info, result) = session_thread.join().unwrap();
+        drop(info);
         all_session_results.push((i + 2, result)); // Thread IDs start from 2
     }
 
