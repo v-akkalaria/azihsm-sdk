@@ -97,7 +97,7 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
     // key for session-scoped keys, the partition masking key (MK)
     // otherwise; a wrong key (tampered scope) or tampered blob fails the
     // HMAC in `unmask` without leaking plaintext.
-    let is_bulk = super::bulk::is_gcm_bulk(kind);
+    let is_bulk = super::bulk::is_bulk(kind);
 
     let (key_id, bulk_key_id, bulk_key_buf): (HsmKeyId, Option<u16>, Option<&mut DmaBuf>) =
         if is_bulk {

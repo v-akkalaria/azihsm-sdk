@@ -108,6 +108,7 @@ pub(crate) fn resolve_target(key_type: DdiKeyType, key_len: Option<u8>) -> HsmRe
         DdiKeyType::Aes192 => aes(HsmVaultKeyKind::Aes192, 24),
         DdiKeyType::Aes256 => aes(HsmVaultKeyKind::Aes256, 32),
 
+        DdiKeyType::AesXtsBulk256 => aes(HsmVaultKeyKind::AesXtsBulk256, 32),
         DdiKeyType::AesGcmBulk256 => aes(HsmVaultKeyKind::AesGcmBulk256, 32),
         DdiKeyType::AesGcmBulk256Unapproved => aes(HsmVaultKeyKind::AesGcmBulk256Unapproved, 32),
 

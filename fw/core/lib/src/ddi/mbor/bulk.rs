@@ -17,12 +17,14 @@
 
 use super::*;
 
-/// True for the AES-GCM bulk vault kinds whose material lives in the
-/// platform bulk-crypto backend rather than the vault.
-pub(crate) fn is_gcm_bulk(kind: HsmVaultKeyKind) -> bool {
+/// True for the AES bulk vault kinds (GCM/XTS) whose material lives in
+/// the platform bulk-crypto backend rather than the vault.
+pub(crate) fn is_bulk(kind: HsmVaultKeyKind) -> bool {
     matches!(
         kind,
-        HsmVaultKeyKind::AesGcmBulk256 | HsmVaultKeyKind::AesGcmBulk256Unapproved
+        HsmVaultKeyKind::AesGcmBulk256
+            | HsmVaultKeyKind::AesGcmBulk256Unapproved
+            | HsmVaultKeyKind::AesXtsBulk256
     )
 }
 

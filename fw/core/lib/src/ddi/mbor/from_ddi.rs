@@ -68,6 +68,7 @@ pub(crate) fn aes(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
 /// [`HsmError::InvalidArg`].
 pub(crate) fn aes_bulk(size: DdiAesKeySize) -> HsmResult<(usize, HsmVaultKeyKind)> {
     match size {
+        DdiAesKeySize::AesXtsBulk256 => Ok((32, HsmVaultKeyKind::AesXtsBulk256)),
         DdiAesKeySize::AesGcmBulk256 => Ok((32, HsmVaultKeyKind::AesGcmBulk256)),
         DdiAesKeySize::AesGcmBulk256Unapproved => {
             Ok((32, HsmVaultKeyKind::AesGcmBulk256Unapproved))

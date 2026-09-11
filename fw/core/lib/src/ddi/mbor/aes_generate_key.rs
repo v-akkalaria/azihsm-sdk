@@ -12,14 +12,13 @@
 //!
 //! For the GCM bulk kinds (`AesGcmBulk256` / `AesGcmBulk256Unapproved`)
 //! the response also carries a `bulk_key_id`.  The bulk key is the key
-//! consumed by the bulk GCM encrypt/decrypt op; the host addresses
+//! consumed by the bulk GCM/XTS encrypt/decrypt op; the host addresses
 //! it via this `bulk_key_id`.  Bulk key material is registered with the
 //! bulk-crypto backend (see [`bulk::commit_key`](super::bulk));
 //! the vault stores only the 2-byte backend handle, and `bulk_key_id` is
 //! the distinct backend-assigned id, not the vault `key_id`.
 //!
-//! Scope: 128/192/256-bit AES keys and AES-256-GCM bulk keys.  The
-//! AES-XTS bulk variant is rejected with `InvalidArg`.
+//! Scope: 128/192/256-bit AES keys and AES-256 GCM/XTS bulk keys.
 
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyReq;
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyResp;
@@ -47,11 +46,13 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
 
     let sess_id = hdr.sess_id.ok_or(HsmError::SessionExpected)?;
 
-    // GCM bulk kinds map to a 32-byte AES-256 key and report a
+    // Bulk kinds (GCM/XTS) map to a 32-byte AES key and report a
     // `bulk_key_id`; non-bulk kinds map to their sized AES vault kind.
     let is_bulk = matches!(
         body.key_size,
-        DdiAesKeySize::AesGcmBulk256 | DdiAesKeySize::AesGcmBulk256Unapproved
+        DdiAesKeySize::AesGcmBulk256
+            | DdiAesKeySize::AesGcmBulk256Unapproved
+            | DdiAesKeySize::AesXtsBulk256
     );
     let (key_len, vault_kind) = if is_bulk {
         super::from_ddi::aes_bulk(body.key_size)?
