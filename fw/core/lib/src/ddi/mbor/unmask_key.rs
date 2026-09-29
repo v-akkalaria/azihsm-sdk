@@ -64,8 +64,14 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
             .map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
 
         // The partition unwrapping key is tagged `RsaUnwrap` and must
-        // not be re-imported as a general key.
-        if metadata.key_type == DdiKeyType::RsaUnwrap {
+        // not be re-imported as a general key.  AES-XTS bulk keys are not
+        // supported by this firmware either (generate and derive reject
+        // them); importing one here would store only the backend handle and
+        // then re-mask that handle instead of the 32-byte key.
+        if matches!(
+            metadata.key_type,
+            DdiKeyType::RsaUnwrap | DdiKeyType::AesXtsBulk256
+        ) {
             return Err(HsmError::InvalidKeyType);
         }
 
@@ -225,23 +231,23 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
     // envelope to stay re-importable.  The envelope is written straight into
     // the reserved `masked_key` response region — no scratch buffer, no copy —
     // keeping the largest RSA-4096 keys within the per-IO DMA budget.
-    let masking_key =
-        super::masking::resolve_masking_key(pal, io, HsmSessId::from(sess_id), attrs.session())?;
-    let metadata = super::masking::masked_metadata(
-        pal,
-        key_type,
-        attrs,
-        &key_label[..],
-        priv_blob.len() as u16,
-    )?;
-
-    // Run the two re-mask passes (size query, then fill) and build the
-    // response inside an inner block so the retained bulk key material can be
-    // scrubbed on every exit path — success or error — below.  Per-IO DMA
-    // arenas are not reliably wiped on teardown, and only bulk keys are kept
-    // in a per-IO buffer here (other kinds live in the vault, which owns
-    // their scrubbing).
+    // Re-mask inside an inner block (masking-key + metadata setup included)
+    // so every exit — success or `?` error — routes through the bulk-key
+    // scrub below.
     let outcome = async {
+        let masking_key = super::masking::resolve_masking_key(
+            pal,
+            io,
+            HsmSessId::from(sess_id),
+            attrs.session(),
+        )?;
+        let metadata = super::masking::masked_metadata(
+            pal,
+            key_type,
+            attrs,
+            &key_label[..],
+            priv_blob.len() as u16,
+        )?;
         let masked_len = mask(pal, io, masking_key, priv_blob, &metadata, None).await?;
 
         let (resp, layout) = pal.dma_alloc_var_with(io, |buf| {

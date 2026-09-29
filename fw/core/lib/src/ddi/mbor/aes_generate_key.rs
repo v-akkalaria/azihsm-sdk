@@ -7,7 +7,7 @@
 //! 192 / 256 bits) or an AES-256-GCM bulk key, persist it in the
 //! partition vault — optionally session-scoped so it is torn down by
 //! [`CloseSession`](super::close_session) — and return the assigned
-//! `key_id` plus an masked-key envelope that the host may re-import on
+//! `key_id` plus a masked-key envelope that the host may re-import on
 //! a future session.
 //!
 //! For the GCM bulk kinds (`AesGcmBulk256` / `AesGcmBulk256Unapproved`)
@@ -76,8 +76,9 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
     // generated material to the backend and keep only the 2-byte
     // `bulk_key_id` reference in the vault.  Non-bulk keys are stored
     // directly.  The registration is scoped to the creating session so
-    // later bulk GCM ops (which carry the session id) match.
-    let (key_handle, bulk_key_id) = super::bulk::commit_key(
+    // later bulk GCM ops (which carry the session id) match.  Scrub the
+    // material on commit failure before propagating.
+    let (key_handle, bulk_key_id) = match super::bulk::commit_key(
         pal,
         io,
         key_buf,
@@ -85,7 +86,14 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
         HsmSessId::from(sess_id),
         attrs,
     )
-    .await?;
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            key_buf.zeroize();
+            return Err(e);
+        }
+    };
     let key_id: u16 = key_handle.into();
 
     // Build the host's opaque re-import blob: envelope the freshly

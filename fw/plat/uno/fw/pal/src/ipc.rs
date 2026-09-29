@@ -59,6 +59,12 @@ pub struct IpcMessage {
 
 const _: () = assert!(core::mem::size_of::<IpcMessage>() == IPC_MESSAGE_LENGTH * 4);
 
+impl zeroize::Zeroize for IpcMessage {
+    fn zeroize(&mut self) {
+        self.data.zeroize();
+    }
+}
+
 // ---------------------------------------------------------------------------
 // IO controller / channel identifiers
 // ---------------------------------------------------------------------------
@@ -725,8 +731,8 @@ pub enum KeyUpdateAction {
     /// Delete a single bulk key.
     Delete = 0,
 
-    /// Delete all ephemeral (session-scoped) bulk keys.
-    DeleteEphemeral = 1,
+    /// Delete all session-scoped bulk keys for a given session.
+    DeleteSessionOnly = 1,
 
     /// Delete all bulk keys.
     DeleteAll = 2,
@@ -810,8 +816,19 @@ impl IpcMessageType for IpcMessageKeyUpdate {
 }
 
 impl IpcMessageEncoderTrait for IpcMessageKeyUpdate {
-    fn encode(self) -> IpcMessage {
-        IpcMessageEncoder::encode(self)
+    fn encode(mut self) -> IpcMessage {
+        // The typed body holds raw AES key material in `info.key_data`;
+        // copy it into the wire `IpcMessage` and immediately scrub the
+        // typed copy so no second stack image of the key lingers past this
+        // encode.  `fp_send_key_update` separately scrubs the returned
+        // `IpcMessage` after the send completes.
+        let mut ipc_message = IpcMessage {
+            data: [0; IPC_MESSAGE_LENGTH],
+        };
+        ipc_message.as_mut_bytes().copy_from_slice(self.as_bytes());
+        use zeroize::Zeroize;
+        self.info.key_data.zeroize();
+        ipc_message
     }
 }
 
