@@ -85,7 +85,7 @@ pub(crate) fn validate_input_secret(kind: HsmVaultKeyKind) -> HsmResult<()> {
 /// into the vault kind, OKM length, and attribute family.
 ///
 /// See the [module docs](self) for the full mapping.  Unsupported
-/// output types (ECC / RSA / Secret / XTS bulk) return
+/// output types (ECC / RSA / Secret) return
 /// [`HsmError::InvalidKeyType`].
 pub(crate) fn resolve_target(key_type: DdiKeyType, key_len: Option<u8>) -> HsmResult<KdfTarget> {
     let aes = |kind, out_len| {

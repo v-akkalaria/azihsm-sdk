@@ -17,7 +17,7 @@
 
 use super::*;
 
-/// True for the AES bulk vault kinds (GCM/XTS) whose material lives in
+/// True for the AES bulk vault kinds (GCM / XTS) whose material lives in
 /// the platform bulk-crypto backend rather than the vault.
 pub(crate) fn is_bulk(kind: HsmVaultKeyKind) -> bool {
     matches!(
@@ -65,7 +65,7 @@ pub(crate) async fn commit_key<P: HsmPal>(
             return Err(e);
         }
     };
-    if is_gcm_bulk(kind) && bulk_key_id.is_none() {
+    if is_bulk(kind) && bulk_key_id.is_none() {
         let _ = pal.vault_key_delete(io, handle).await;
         return Err(HsmError::UnsupportedCmd);
     }

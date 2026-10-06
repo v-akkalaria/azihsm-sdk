@@ -65,14 +65,8 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
             .map_err(|_| HsmError::MaskedKeyDecodeFailed)?;
 
         // The partition unwrapping key is tagged `RsaUnwrap` and must
-        // not be re-imported as a general key.  AES-XTS bulk keys are not
-        // supported by this firmware either (generate and derive reject
-        // them); importing one here would store only the backend handle and
-        // then re-mask that handle instead of the 32-byte key.
-        if matches!(
-            metadata.key_type,
-            DdiKeyType::RsaUnwrap | DdiKeyType::AesXtsBulk256
-        ) {
+        // not be re-imported as a general key.
+        if metadata.key_type == DdiKeyType::RsaUnwrap {
             return Err(HsmError::InvalidKeyType);
         }
 
@@ -95,7 +89,7 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
     };
 
     // Authenticate-then-decrypt in place, copy out the primary key
-    // material, and import it — for AES-GCM bulk keys into the bulk-crypto
+    // material, and import it — for AES bulk keys (GCM / XTS) into the bulk-crypto
     // backend (the vault records only the returned `bulk_key_id` handle, and the
     // 32-byte material is kept in the per-IO arena so it can be re-masked
     // below); for every other kind into the vault inside an allocation
