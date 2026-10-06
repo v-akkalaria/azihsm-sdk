@@ -79,13 +79,18 @@ impl HsmSessionManager for UnoHsmPal {
         if api_rev.len() != SESSION_API_REV_SIZE || masking_key.len() != SESSION_MASKING_KEY_SIZE {
             return Err(HsmError::InvalidArg);
         }
+        // Held until the slot is (re)created, so on re-key no bulk key can be
+        // registered for the old session between its key teardown and the
+        // recreation.
+        let _guard = self.fp_bulk_lock.lock().await;
+
         let table = SessionStore::partition(io.pid())?;
 
         // On re-key: tear down the old session-scoped keys and the old
         // session key before creating the replacement.
         if let Some(reopen_id) = id {
             let old_phys = table.physical_id(reopen_id)?;
-            self.vault_key_delete_by_session(io, reopen_id).await?;
+            crate::vault::delete_session_keys(self, io, reopen_id).await?;
             crate::vault::vault(io).delete(self, io, old_phys).await?;
         }
 
@@ -95,9 +100,10 @@ impl HsmSessionManager for UnoHsmPal {
         blob[..SESSION_API_REV_SIZE].copy_from_slice(api_rev);
         blob[SESSION_API_REV_SIZE..].copy_from_slice(masking_key);
 
-        // Store as an internal session key.
+        // Store as an internal session key, then wipe the scratch copy of the
+        // masking key whether or not the store succeeded.
         let attrs = HsmVaultKeyAttrs::new().with_internal(true);
-        let physical_id = {
+        let created = {
             let mut v = crate::vault::vault(io);
             v.create(
                 self,
@@ -108,8 +114,10 @@ impl HsmSessionManager for UnoHsmPal {
                 None,
                 attrs,
             )
-            .await?
+            .await
         };
+        blob.zeroize();
+        let physical_id = created?;
 
         // Allocate (or re-map, on re-key) the logical session slot.
         let result = {
@@ -133,16 +141,21 @@ impl HsmSessionManager for UnoHsmPal {
     }
 
     async fn session_destroy(&self, io: &impl HsmIo, id: HsmSessId) -> HsmResult<()> {
+        // Hold the bulk-key lock until the slot is freed so a concurrent
+        // bulk-key create for this session either finishes first (and is
+        // deleted below) or observes the session as gone.
+        let _guard = self.fp_bulk_lock.lock().await;
+
         let mut table = SessionStore::partition(io.pid())?;
 
-        // Resolve the physical vault key id before any async work (drops the
+        // Resolve the physical vault key id before the vault awaits (drops the
         // session-store borrow before the awaits).
         let physical_id = table.physical_id(id)?;
 
         // Delete every session-scoped key bound to this logical session
         // (including any fast-path engine cleanup), then the session key
         // itself.
-        self.vault_key_delete_by_session(io, id).await?;
+        crate::vault::delete_session_keys(self, io, id).await?;
         crate::vault::vault(io)
             .delete(self, io, physical_id)
             .await?;
