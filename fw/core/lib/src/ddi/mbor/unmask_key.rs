@@ -89,15 +89,15 @@ pub(crate) async fn unmask_key<'p, P: HsmPal>(
     };
 
     // Authenticate-then-decrypt in place, copy out the primary key
-    // material, and import it — for AES bulk keys (GCM / XTS) into the bulk-crypto
-    // backend (the vault records only the returned `bulk_key_id` handle, and the
-    // 32-byte material is kept in the per-IO arena so it can be re-masked
-    // below); for every other kind into the vault inside an allocation
-    // scope so the (multi-KB for RSA) import scratch is freed before the
-    // response frame is built.  The masking key is the per-session masking
-    // key for session-scoped keys, the partition masking key (MK)
-    // otherwise; a wrong key (tampered scope) or tampered blob fails the
-    // HMAC in `unmask` without leaking plaintext.
+    // material, and import it — for AES bulk keys (GCM / XTS) into the
+    // bulk-crypto backend (the vault records only the returned `bulk_key_id`
+    // handle, and the 32-byte material is kept in the per-IO arena so it can
+    // be re-masked below); for every other kind into the vault inside an
+    // allocation scope so the (multi-KB for RSA) import scratch is freed
+    // before the response frame is built.  The masking key is the
+    // per-session masking key for session-scoped keys, the partition masking
+    // key (MK) otherwise; a wrong key (tampered scope) or tampered blob fails
+    // the HMAC in `unmask` without leaking plaintext.
     let is_bulk = super::bulk::is_bulk(kind);
 
     let (key_id, bulk_key_id, bulk_key_buf): (HsmKeyId, Option<u16>, Option<&mut DmaBuf>) =

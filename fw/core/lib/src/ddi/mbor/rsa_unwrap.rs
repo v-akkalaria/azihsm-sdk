@@ -87,8 +87,8 @@ pub(crate) async fn rsa_unwrap<'p, P: HsmPal>(
     // separate property comparison.
     let unwrap_key_id = HsmKeyId::from(body.key_id);
 
-    // AES-256 bulk keys (GCM / XTS) follow a distinct import path: the recovered
-    // key is handed to the bulk-crypto backend and only its 2-byte
+    // AES-256 bulk keys (GCM / XTS) follow a distinct import path: the
+    // recovered key is handed to the bulk-crypto backend and only its 2-byte
     // `bulk_key_id` handle is kept in the vault (mirroring
     // [`aes_generate_key`](super::aes_generate_key)'s bulk path).  Handle
     // and return here, before the asymmetric / AES import flow below.

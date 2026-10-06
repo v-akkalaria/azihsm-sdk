@@ -11,9 +11,9 @@
 //! a future session.
 //!
 //! For the bulk kinds (`AesGcmBulk256` / `AesGcmBulk256Unapproved` /
-//! `AesXtsBulk256`) the response also carries a `bulk_key_id`.  The bulk key
-//! is the key consumed by the bulk GCM / XTS encrypt/decrypt op; the host addresses
-//! it via this `bulk_key_id`.  Bulk key material is registered with the
+//! `AesXtsBulk256`) the response also carries a `bulk_key_id`.  The bulk
+//! key is the key consumed by the bulk GCM / XTS encrypt/decrypt op; the
+//! host addresses it via this `bulk_key_id`.  Bulk key material is registered with the
 //! bulk-crypto backend (see [`bulk::commit_key`](super::bulk));
 //! the vault stores only the 2-byte backend handle, and `bulk_key_id` is
 //! the distinct backend-assigned id, not the vault `key_id`.
@@ -22,7 +22,6 @@
 
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyReq;
 use azihsm_fw_ddi_mbor_types::aes_generate_key::DdiAesGenerateKeyResp;
-use azihsm_fw_ddi_mbor_types::DdiAesKeySize;
 
 use super::*;
 
@@ -48,17 +47,9 @@ pub(crate) async fn aes_generate_key<'p, P: HsmPal>(
 
     // Bulk kinds (GCM / XTS) map to a 32-byte AES-256 key and report a
     // `bulk_key_id`; non-bulk kinds map to their sized AES vault kind.
-    let is_bulk = matches!(
-        body.key_size,
-        DdiAesKeySize::AesGcmBulk256
-            | DdiAesKeySize::AesGcmBulk256Unapproved
-            | DdiAesKeySize::AesXtsBulk256
-    );
-    let (key_len, vault_kind) = if is_bulk {
-        super::from_ddi::aes_bulk(body.key_size)?
-    } else {
-        super::from_ddi::aes(body.key_size)?
-    };
+    let (key_len, vault_kind) = super::from_ddi::aes_bulk(body.key_size)
+        .or_else(|_| super::from_ddi::aes(body.key_size))?;
+    let is_bulk = super::bulk::is_bulk(vault_kind);
     let attrs = super::key_attrs::for_aes(&body.key_properties.key_metadata, true)?;
 
     // Session-only keys are anonymous — disallow a host-supplied
